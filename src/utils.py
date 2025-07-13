@@ -75,12 +75,50 @@ def is_valid_content(content: str, min_length: int = 20, max_length: int = 5000)
 
 
 def detect_language(text: str) -> str:
-    """Detect language of text content"""
+    """Detect language of text content with improved accuracy"""
+    if not text or len(text.strip()) < 10:
+        return "en"  # Assume short texts are English
+
+    # Check for common English indicators first
+    english_indicators = [
+        'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with',
+        'university', 'college', 'school', 'student', 'study', 'course', 'program',
+        'application', 'admission', 'degree', 'major', 'gpa', 'sat', 'gre',
+        'i', 'you', 'he', 'she', 'it', 'we', 'they', 'my', 'your', 'his', 'her'
+    ]
+
+    text_lower = text.lower()
+    english_word_count = sum(1 for word in english_indicators if word in text_lower)
+
+    # If we find many English indicators, assume it's English
+    if english_word_count >= 3:
+        return "en"
+
+    # Try langdetect as fallback, but be more conservative
     try:
-        from langdetect import detect
-        return detect(text)
-    except:
-        return "unknown"
+        from langdetect import detect, detect_langs
+
+        # Get confidence scores
+        langs = detect_langs(text)
+        if langs:
+            top_lang = langs[0]
+            # Only trust the detection if confidence is high
+            if top_lang.prob > 0.8:
+                return top_lang.lang
+            else:
+                # Low confidence, check if English is in top candidates
+                for lang in langs:
+                    if lang.lang == 'en' and lang.prob > 0.3:
+                        return "en"
+
+        # Fallback to simple detection
+        detected = detect(text)
+        return detected if detected else "en"
+
+    except Exception as e:
+        # If langdetect fails or isn't installed, assume English
+        # Most Reddit content in study abroad subreddits is English
+        return "en"
 
 
 def expand_abbreviations(text: str) -> str:

@@ -51,9 +51,12 @@ labeling:
   - 消极
   - 中性
 processing:
-  max_comment_length: 5000
-  min_comment_length: 20
+  max_comment_length: 10000
+  min_comment_length: 5
   similarity_threshold: 0.85
+  # Language filtering settings
+  enable_language_filter: true # Disable by default due to accuracy issues
+  target_language: "en"
 reddit_api:
   client_id: iGrqFSWhna5Yz-DM1k8oAw
   client_secret: 17-kiRkgHdPT92pxC8U5JcDz5M_Y4g
@@ -63,8 +66,8 @@ reddit_api:
 scraping:
   delay_max: 3
   delay_min: 1
-  max_comments_per_post: 50
-  max_posts_per_subreddit: 100
+  max_comments_per_post: 5
+  max_posts_per_subreddit: 10
 subreddits:
 - ApplyingToCollege
 - gradadmissions

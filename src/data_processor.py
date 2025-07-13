@@ -128,124 +128,224 @@ class DataProcessor:
     
     def detect_duplicates(self, threshold: float = 0.85) -> List[Tuple[int, int, float]]:
         """Detect duplicate or highly similar posts"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
         # Get all posts with cleaned content
-        cursor.execute("""
-            SELECT id, answer_content_cleaned 
-            FROM posts 
-            WHERE answer_content_cleaned IS NOT NULL 
+        query = """
+            SELECT id, answer_content_cleaned
+            FROM posts
+            WHERE answer_content_cleaned IS NOT NULL
             AND LENGTH(answer_content_cleaned) > 50
-        """)
-        
-        posts = cursor.fetchall()
+        """
+
+        posts = self.db_manager.execute_query(query)
         duplicates = []
-        
+
         log_message(f"Checking {len(posts)} posts for duplicates...")
-        
+
         # Compare each pair of posts
         for i in range(len(posts)):
             for j in range(i + 1, len(posts)):
-                id1, content1 = posts[i]
-                id2, content2 = posts[j]
-                
+                if self.db_manager.db_type == 'mysql':
+                    id1, content1 = posts[i]['id'], posts[i]['answer_content_cleaned']
+                    id2, content2 = posts[j]['id'], posts[j]['answer_content_cleaned']
+                else:
+                    id1, content1 = posts[i][0], posts[i][1]
+                    id2, content2 = posts[j][0], posts[j][1]
+
                 similarity = self.calculate_text_similarity(content1, content2)
-                
+
                 if similarity >= threshold:
                     duplicates.append((id1, id2, similarity))
-        
-        conn.close()
+
         log_message(f"Found {len(duplicates)} duplicate pairs")
         return duplicates
     
     def remove_invalid_data(self) -> int:
         """Remove invalid, noise, and duplicate data"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
         removed_count = 0
-        
+
+        # First, check how many posts would be affected
+        self._log_removal_preview()
+
         # Remove posts with invalid content length
         min_length = self.config['processing']['min_comment_length']
         max_length = self.config['processing']['max_comment_length']
-        
-        cursor.execute("""
-            DELETE FROM posts 
-            WHERE LENGTH(answer_content_cleaned) < ? 
-            OR LENGTH(answer_content_cleaned) > ?
-        """, (min_length, max_length))
-        
-        removed_count += cursor.rowcount
-        log_message(f"Removed {cursor.rowcount} posts with invalid length")
-        
-        # Remove non-English posts (if language detection is available)
-        try:
-            cursor.execute("SELECT id, answer_content_cleaned FROM posts")
-            posts_to_check = cursor.fetchall()
-            
-            non_english_ids = []
-            for post_id, content in posts_to_check:
-                if detect_language(content) != 'en':
-                    non_english_ids.append(post_id)
-            
-            if non_english_ids:
-                placeholders = ','.join(['?'] * len(non_english_ids))
-                cursor.execute(f"DELETE FROM posts WHERE id IN ({placeholders})", non_english_ids)
-                removed_count += cursor.rowcount
-                log_message(f"Removed {cursor.rowcount} non-English posts")
-                
-        except ImportError:
-            log_message("Language detection not available, skipping language filter")
-        
+
+        # Only remove posts that have been processed and have invalid length
+        # Don't remove posts that haven't been processed yet (answer_content_cleaned is NULL)
+        delete_query = """
+            DELETE FROM posts
+            WHERE answer_content_cleaned IS NOT NULL
+            AND processed_at IS NOT NULL
+            AND (LENGTH(answer_content_cleaned) < %s
+                 OR LENGTH(answer_content_cleaned) > %s)
+        """ if self.db_manager.db_type == 'mysql' else """
+            DELETE FROM posts
+            WHERE answer_content_cleaned IS NOT NULL
+            AND processed_at IS NOT NULL
+            AND (LENGTH(answer_content_cleaned) < ?
+                 OR LENGTH(answer_content_cleaned) > ?)
+        """
+
+        count = self.db_manager.execute_update(delete_query, (min_length, max_length))
+        removed_count += count
+        log_message(f"Removed {count} posts with invalid length (min: {min_length}, max: {max_length})")
+
+        # Remove non-English posts (if enabled and language detection is available)
+        if self.config['processing'].get('enable_language_filter', False):
+            try:
+                target_lang = self.config['processing'].get('target_language', 'en')
+                posts_query = "SELECT id, answer_content_cleaned FROM posts WHERE answer_content_cleaned IS NOT NULL AND processed_at IS NOT NULL"
+                posts_to_check = self.db_manager.execute_query(posts_query)
+
+                non_target_ids = []
+                total_checked = 0
+
+                log_message(f"Checking language for {len(posts_to_check)} posts (target: {target_lang})...")
+
+                for post in posts_to_check:
+                    if self.db_manager.db_type == 'mysql':
+                        post_id, content = post['id'], post['answer_content_cleaned']
+                    else:
+                        post_id, content = post[0], post[1]
+
+                    if content and len(content.strip()) > 10:  # Only check substantial content
+                        detected_lang = detect_language(content)
+                        total_checked += 1
+
+                        if detected_lang != target_lang:
+                            non_target_ids.append(post_id)
+                            if len(non_target_ids) <= 5:  # Log first few for debugging
+                                log_message(f"  Post {post_id}: detected as '{detected_lang}' - {content[:50]}...")
+
+                log_message(f"Language detection results: {len(non_target_ids)}/{total_checked} posts detected as non-{target_lang}")
+
+                if non_target_ids:
+                    # Ask for confirmation if removing many posts
+                    if len(non_target_ids) > len(posts_to_check) * 0.5:  # More than 50%
+                        log_message(f"⚠️  WARNING: {len(non_target_ids)} posts ({len(non_target_ids)/len(posts_to_check)*100:.1f}%) detected as non-{target_lang}", "WARNING")
+                        log_message("⚠️  This seems unusually high. Language detection might be inaccurate.", "WARNING")
+                        log_message("⚠️  Consider setting 'enable_language_filter: false' in config.yaml", "WARNING")
+
+                        # Don't auto-remove if detection seems inaccurate
+                        if len(non_target_ids) > len(posts_to_check) * 0.8:  # More than 80%
+                            log_message("⚠️  Skipping language filter due to suspicious results", "WARNING")
+                            non_target_ids = []
+
+                    if non_target_ids:
+                        placeholders = ','.join(['%s'] * len(non_target_ids)) if self.db_manager.db_type == 'mysql' else ','.join(['?'] * len(non_target_ids))
+                        delete_query = f"DELETE FROM posts WHERE id IN ({placeholders})"
+                        count = self.db_manager.execute_update(delete_query, tuple(non_target_ids))
+                        removed_count += count
+                        log_message(f"Removed {count} non-{target_lang} posts")
+                else:
+                    log_message(f"All posts detected as {target_lang}")
+
+            except Exception as e:
+                log_message(f"Error in language detection: {e}", "ERROR")
+                log_message("Skipping language filter due to error")
+        else:
+            log_message("Language filter disabled in configuration")
+
         # Remove duplicates
         duplicates = self.detect_duplicates(self.config['processing']['similarity_threshold'])
         duplicate_ids = [dup[1] for dup in duplicates]  # Keep first, remove second
-        
+
         if duplicate_ids:
-            placeholders = ','.join(['?'] * len(duplicate_ids))
-            cursor.execute(f"DELETE FROM posts WHERE id IN ({placeholders})", duplicate_ids)
-            removed_count += cursor.rowcount
-            log_message(f"Removed {cursor.rowcount} duplicate posts")
-        
-        conn.commit()
-        conn.close()
-        
+            placeholders = ','.join(['%s'] * len(duplicate_ids)) if self.db_manager.db_type == 'mysql' else ','.join(['?'] * len(duplicate_ids))
+            delete_query = f"DELETE FROM posts WHERE id IN ({placeholders})"
+            count = self.db_manager.execute_update(delete_query, tuple(duplicate_ids))
+            removed_count += count
+            log_message(f"Removed {count} duplicate posts")
+
         return removed_count
+
+    def _log_removal_preview(self):
+        """Log what would be removed before actually removing"""
+        min_length = self.config['processing']['min_comment_length']
+        max_length = self.config['processing']['max_comment_length']
+
+        # Count total posts
+        total_query = "SELECT COUNT(*) as count FROM posts"
+        result = self.db_manager.execute_query(total_query)
+        total_posts = result[0]['count'] if self.db_manager.db_type == 'mysql' else result[0][0]
+
+        # Count processed posts
+        processed_query = "SELECT COUNT(*) as count FROM posts WHERE processed_at IS NOT NULL"
+        result = self.db_manager.execute_query(processed_query)
+        processed_posts = result[0]['count'] if self.db_manager.db_type == 'mysql' else result[0][0]
+
+        # Count posts that would be removed by length filter
+        length_query = """
+            SELECT COUNT(*) as count FROM posts
+            WHERE answer_content_cleaned IS NOT NULL
+            AND processed_at IS NOT NULL
+            AND (LENGTH(answer_content_cleaned) < %s
+                 OR LENGTH(answer_content_cleaned) > %s)
+        """ if self.db_manager.db_type == 'mysql' else """
+            SELECT COUNT(*) as count FROM posts
+            WHERE answer_content_cleaned IS NOT NULL
+            AND processed_at IS NOT NULL
+            AND (LENGTH(answer_content_cleaned) < ?
+                 OR LENGTH(answer_content_cleaned) > ?)
+        """
+
+        result = self.db_manager.execute_query(length_query, (min_length, max_length))
+        would_remove = result[0]['count'] if self.db_manager.db_type == 'mysql' else result[0][0]
+
+        log_message(f"Data removal preview:")
+        log_message(f"  Total posts: {total_posts}")
+        log_message(f"  Processed posts: {processed_posts}")
+        log_message(f"  Posts that would be removed by length filter: {would_remove}")
+        log_message(f"  Length criteria: {min_length} <= length <= {max_length}")
+
+        if would_remove == processed_posts and processed_posts > 0:
+            log_message("⚠️  WARNING: ALL processed posts would be removed!", "WARNING")
+            log_message("⚠️  This suggests the length criteria are too strict!", "WARNING")
     
     def process_all_posts(self) -> int:
         """Process all posts in the database"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
         # Get all unprocessed posts
-        cursor.execute("""
-            SELECT id, question_title, answer_content_raw 
-            FROM posts 
+        query = """
+            SELECT id, question_title, answer_content_raw
+            FROM posts
             WHERE processed_at IS NULL
-        """)
-        
-        posts = cursor.fetchall()
+        """
+
+        posts = self.db_manager.execute_query(query)
         processed_count = 0
-        
+
         log_message(f"Processing {len(posts)} posts...")
-        
-        for post_id, title, raw_content in posts:
+
+        for post in posts:
             try:
+                if self.db_manager.db_type == 'mysql':
+                    post_id, title, raw_content = post['id'], post['question_title'], post['answer_content_raw']
+                else:
+                    post_id, title, raw_content = post[0], post[1], post[2]
+
                 # Clean and normalize content
                 cleaned_content = self.clean_and_normalize_text(raw_content)
                 cleaned_title = self.clean_and_normalize_text(title)
-                
+
                 # Extract entities
                 combined_text = f"{cleaned_title} {cleaned_content}"
                 entities = self.extract_entities(combined_text)
-                
+
                 # Generate key content (simple extractive summary)
                 key_content = self.extract_key_content(cleaned_content)
-                
+
                 # Update database
-                cursor.execute("""
-                    UPDATE posts SET 
+                update_query = """
+                    UPDATE posts SET
+                        answer_content_cleaned = %s,
+                        university_name = %s,
+                        major_name = %s,
+                        program_name = %s,
+                        key_content = %s,
+                        processed_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                """ if self.db_manager.db_type == 'mysql' else """
+                    UPDATE posts SET
                         answer_content_cleaned = ?,
                         university_name = ?,
                         major_name = ?,
@@ -253,7 +353,9 @@ class DataProcessor:
                         key_content = ?,
                         processed_at = CURRENT_TIMESTAMP
                     WHERE id = ?
-                """, (
+                """
+
+                self.db_manager.execute_update(update_query, (
                     cleaned_content,
                     ', '.join(entities['universities'][:3]),  # Limit to top 3
                     ', '.join(entities['majors'][:3]),
@@ -261,19 +363,15 @@ class DataProcessor:
                     key_content,
                     post_id
                 ))
-                
+
                 processed_count += 1
-                
+
                 if processed_count % 100 == 0:
                     log_message(f"Processed {processed_count}/{len(posts)} posts")
-                    conn.commit()
-                    
+
             except Exception as e:
                 log_message(f"Error processing post {post_id}: {e}", "ERROR")
-        
-        conn.commit()
-        conn.close()
-        
+
         log_message(f"Completed processing {processed_count} posts")
         return processed_count
     
@@ -318,28 +416,24 @@ class DataProcessor:
     
     def get_processing_stats(self) -> Dict[str, int]:
         """Get statistics about processed data"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
         stats = {}
-        
+
         # Total posts
-        cursor.execute("SELECT COUNT(*) FROM posts")
-        stats['total_posts'] = cursor.fetchone()[0]
-        
+        result = self.db_manager.execute_query("SELECT COUNT(*) as count FROM posts")
+        stats['total_posts'] = result[0]['count'] if self.db_manager.db_type == 'mysql' else result[0][0]
+
         # Processed posts
-        cursor.execute("SELECT COUNT(*) FROM posts WHERE processed_at IS NOT NULL")
-        stats['processed_posts'] = cursor.fetchone()[0]
-        
+        result = self.db_manager.execute_query("SELECT COUNT(*) as count FROM posts WHERE processed_at IS NOT NULL")
+        stats['processed_posts'] = result[0]['count'] if self.db_manager.db_type == 'mysql' else result[0][0]
+
         # Posts with entities
-        cursor.execute("SELECT COUNT(*) FROM posts WHERE university_name != ''")
-        stats['posts_with_universities'] = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT COUNT(*) FROM posts WHERE major_name != ''")
-        stats['posts_with_majors'] = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT COUNT(*) FROM posts WHERE program_name != ''")
-        stats['posts_with_programs'] = cursor.fetchone()[0]
-        
-        conn.close()
+        result = self.db_manager.execute_query("SELECT COUNT(*) as count FROM posts WHERE university_name != '' AND university_name IS NOT NULL")
+        stats['posts_with_universities'] = result[0]['count'] if self.db_manager.db_type == 'mysql' else result[0][0]
+
+        result = self.db_manager.execute_query("SELECT COUNT(*) as count FROM posts WHERE major_name != '' AND major_name IS NOT NULL")
+        stats['posts_with_majors'] = result[0]['count'] if self.db_manager.db_type == 'mysql' else result[0][0]
+
+        result = self.db_manager.execute_query("SELECT COUNT(*) as count FROM posts WHERE program_name != '' AND program_name IS NOT NULL")
+        stats['posts_with_programs'] = result[0]['count'] if self.db_manager.db_type == 'mysql' else result[0][0]
+
         return stats

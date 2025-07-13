@@ -245,93 +245,105 @@ class LabelingSystem:
     
     def label_all_posts(self) -> int:
         """Apply labeling to all processed posts in the database"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
         # Get all processed posts without labels
-        cursor.execute("""
+        query = """
             SELECT id, question_title, answer_content_cleaned, key_content
-            FROM posts 
-            WHERE processed_at IS NOT NULL 
+            FROM posts
+            WHERE processed_at IS NOT NULL
             AND (difficulty_label IS NULL OR course_evaluation_label IS NULL OR sentiment_label IS NULL)
-        """)
-        
-        posts = cursor.fetchall()
+        """
+
+        posts = self.db_manager.execute_query(query)
         labeled_count = 0
-        
+
         log_message(f"Labeling {len(posts)} posts...")
-        
-        for post_id, title, content, key_content in posts:
+
+        for post in posts:
             try:
+                if self.db_manager.db_type == 'mysql':
+                    post_id, title, content, key_content = post['id'], post['question_title'], post['answer_content_cleaned'], post['key_content']
+                else:
+                    post_id, title, content, key_content = post[0], post[1], post[2], post[3]
+
                 # Combine all text for analysis
                 combined_text = f"{title} {content} {key_content or ''}"
-                
+
                 # Apply labeling
                 labels = self.label_post(post_id, combined_text)
-                
+
                 # Update database
-                cursor.execute("""
-                    UPDATE posts SET 
+                update_query = """
+                    UPDATE posts SET
+                        difficulty_label = %s,
+                        course_evaluation_label = %s,
+                        sentiment_label = %s,
+                        sentiment_score = %s
+                    WHERE id = %s
+                """ if self.db_manager.db_type == 'mysql' else """
+                    UPDATE posts SET
                         difficulty_label = ?,
                         course_evaluation_label = ?,
                         sentiment_label = ?,
                         sentiment_score = ?
                     WHERE id = ?
-                """, (
+                """
+
+                self.db_manager.execute_update(update_query, (
                     labels['difficulty_label'],
                     labels['course_label'],
                     labels['sentiment_label'],
                     labels['sentiment_score'],
                     post_id
                 ))
-                
+
                 labeled_count += 1
-                
+
                 if labeled_count % 100 == 0:
                     log_message(f"Labeled {labeled_count}/{len(posts)} posts")
-                    conn.commit()
-                    
+
             except Exception as e:
                 log_message(f"Error labeling post {post_id}: {e}", "ERROR")
-        
-        conn.commit()
-        conn.close()
-        
+
         log_message(f"Completed labeling {labeled_count} posts")
         return labeled_count
     
     def get_labeling_stats(self) -> Dict[str, any]:
         """Get statistics about labeled data"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
         stats = {}
-        
+
         # Total labeled posts
-        cursor.execute("""
-            SELECT COUNT(*) FROM posts 
-            WHERE difficulty_label IS NOT NULL 
-            OR course_evaluation_label IS NOT NULL 
+        result = self.db_manager.execute_query("""
+            SELECT COUNT(*) as count FROM posts
+            WHERE difficulty_label IS NOT NULL
+            OR course_evaluation_label IS NOT NULL
             OR sentiment_label IS NOT NULL
         """)
-        stats['total_labeled'] = cursor.fetchone()[0]
-        
+        stats['total_labeled'] = result[0]['count'] if self.db_manager.db_type == 'mysql' else result[0][0]
+
         # Difficulty distribution
-        cursor.execute("SELECT difficulty_label, COUNT(*) FROM posts WHERE difficulty_label IS NOT NULL GROUP BY difficulty_label")
-        stats['difficulty_distribution'] = dict(cursor.fetchall())
-        
+        result = self.db_manager.execute_query("SELECT difficulty_label, COUNT(*) as count FROM posts WHERE difficulty_label IS NOT NULL GROUP BY difficulty_label")
+        if self.db_manager.db_type == 'mysql':
+            stats['difficulty_distribution'] = {row['difficulty_label']: row['count'] for row in result}
+        else:
+            stats['difficulty_distribution'] = dict(result)
+
         # Course evaluation distribution
-        cursor.execute("SELECT course_evaluation_label, COUNT(*) FROM posts WHERE course_evaluation_label IS NOT NULL GROUP BY course_evaluation_label")
-        stats['course_distribution'] = dict(cursor.fetchall())
-        
+        result = self.db_manager.execute_query("SELECT course_evaluation_label, COUNT(*) as count FROM posts WHERE course_evaluation_label IS NOT NULL GROUP BY course_evaluation_label")
+        if self.db_manager.db_type == 'mysql':
+            stats['course_distribution'] = {row['course_evaluation_label']: row['count'] for row in result}
+        else:
+            stats['course_distribution'] = dict(result)
+
         # Sentiment distribution
-        cursor.execute("SELECT sentiment_label, COUNT(*) FROM posts WHERE sentiment_label IS NOT NULL GROUP BY sentiment_label")
-        stats['sentiment_distribution'] = dict(cursor.fetchall())
-        
+        result = self.db_manager.execute_query("SELECT sentiment_label, COUNT(*) as count FROM posts WHERE sentiment_label IS NOT NULL GROUP BY sentiment_label")
+        if self.db_manager.db_type == 'mysql':
+            stats['sentiment_distribution'] = {row['sentiment_label']: row['count'] for row in result}
+        else:
+            stats['sentiment_distribution'] = dict(result)
+
         # Average sentiment score
-        cursor.execute("SELECT AVG(sentiment_score) FROM posts WHERE sentiment_score IS NOT NULL")
-        avg_sentiment = cursor.fetchone()[0]
+        result = self.db_manager.execute_query("SELECT AVG(sentiment_score) as avg_score FROM posts WHERE sentiment_score IS NOT NULL")
+        avg_sentiment = result[0]['avg_score'] if self.db_manager.db_type == 'mysql' else result[0][0]
         stats['average_sentiment_score'] = round(avg_sentiment, 2) if avg_sentiment else None
-        
-        conn.close()
+
         return stats

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 Reddit Study Abroad Data Scraper - Main Application
-Perfects.AI Data Science Internship Test Project
 
 This is the main entry point for the Reddit scraper application.
 It orchestrates the three main components:
