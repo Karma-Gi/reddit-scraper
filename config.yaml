@@ -1,0 +1,74 @@
+database:
+  mysql:
+    autocommit: true
+    charset: utf8mb4
+    database: reddit_study_abroad
+    host: localhost
+    password: '668818'
+    port: 3306
+    username: root
+  sqlite:
+    backup_enabled: true
+    backup_interval: 1000
+    name: reddit_study_abroad.db
+  type: mysql
+keywords:
+  majors:
+  - Computer Science
+  - CS
+  - Engineering
+  - Medicine
+  - Business
+  - MBA
+  programs:
+  - PhD
+  - Master
+  - MS
+  - BS
+  - Undergraduate
+  - Graduate
+  universities:
+  - MIT
+  - Stanford
+  - Harvard
+  - CMU
+  - UC Berkeley
+  - Caltech
+labeling:
+  confidence_threshold: 0.7
+  course_evaluation_labels:
+  - 优秀
+  - 良好
+  - 一般
+  - 差
+  difficulty_labels:
+  - 极难
+  - 难
+  - 中等
+  - 易
+  sentiment_labels:
+  - 积极
+  - 消极
+  - 中性
+processing:
+  max_comment_length: 5000
+  min_comment_length: 20
+  similarity_threshold: 0.85
+reddit_api:
+  client_id: iGrqFSWhna5Yz-DM1k8oAw
+  client_secret: 17-kiRkgHdPT92pxC8U5JcDz5M_Y4g
+  password: Dty20030123%
+  user_agent: StudyAbroadScraper/1.0 by RedditUser
+  username: Flat-Assumption276
+scraping:
+  delay_max: 3
+  delay_min: 1
+  max_comments_per_post: 50
+  max_posts_per_subreddit: 100
+subreddits:
+- ApplyingToCollege
+- gradadmissions
+- studyabroad
+- college
+- GradSchool
+# user_agents section removed - not needed for Reddit API
