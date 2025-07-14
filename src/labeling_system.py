@@ -12,6 +12,7 @@ import json
 
 from .utils import load_config, log_message
 from .database_manager import create_database_manager
+from .smart_labeling_analyzer import SmartLabelingAnalyzer
 
 
 class LabelingSystem:
@@ -28,7 +29,17 @@ class LabelingSystem:
         self.course_labels = self.config['labeling']['course_evaluation_labels']
         self.sentiment_labels = self.config['labeling']['sentiment_labels']
         self.confidence_threshold = self.config['labeling']['confidence_threshold']
-        
+
+        # Initialize smart labeling analyzer
+        self.smart_analyzer = None
+        if self.config.get('smart_labeling', {}).get('enabled', False):
+            try:
+                self.smart_analyzer = SmartLabelingAnalyzer(config_path)
+                log_message("✅ Smart labeling analyzer initialized")
+            except Exception as e:
+                log_message(f"⚠️  Failed to initialize smart analyzer: {e}", "WARNING")
+                log_message("Falling back to rule-based labeling")
+
         # Initialize keyword dictionaries for rule-based labeling
         self._initialize_keywords()
     
@@ -222,25 +233,59 @@ class LabelingSystem:
             return base_score  # Keep neutral at 5
     
     def label_post(self, post_id: int, text: str) -> Dict[str, any]:
-        """Apply all labeling to a single post"""
+        """Apply all labeling to a single post using smart or fallback methods"""
+
+        # Try smart analysis first
+        if self.smart_analyzer:
+            try:
+                smart_results = self.smart_analyzer.analyze_comprehensive(text, str(post_id))
+
+                # Convert smart results to our format
+                results = {
+                    'difficulty_label': smart_results.get('difficulty_label'),
+                    'difficulty_confidence': smart_results.get('confidence', 0.0),
+                    'course_label': smart_results.get('course_label'),
+                    'course_confidence': smart_results.get('confidence', 0.0),
+                    'sentiment_label': smart_results.get('sentiment_label'),
+                    'sentiment_confidence': smart_results.get('confidence', 0.0),
+                    'sentiment_score': smart_results.get('sentiment_score', 5.0),
+                    'method_used': 'smart_analysis'
+                }
+
+                # Log smart analysis results for debugging
+                if any(results[key] for key in ['difficulty_label', 'course_label', 'sentiment_label']):
+                    log_message(f"Smart analysis for post {post_id}: {smart_results}")
+
+                return results
+
+            except Exception as e:
+                log_message(f"Smart analysis failed for post {post_id}: {e}", "ERROR")
+                log_message("Falling back to rule-based labeling")
+
+        # Fallback to rule-based labeling
+        return self._label_post_fallback(post_id, text)
+
+    def _label_post_fallback(self, post_id: int, text: str) -> Dict[str, any]:
+        """Fallback rule-based labeling method"""
         results = {}
-        
+
         # Classify difficulty
         difficulty_label, difficulty_conf = self.classify_difficulty(text)
         results['difficulty_label'] = difficulty_label if difficulty_conf >= self.confidence_threshold else None
         results['difficulty_confidence'] = difficulty_conf
-        
+
         # Classify course evaluation
         course_label, course_conf = self.classify_course_evaluation(text)
         results['course_label'] = course_label if course_conf >= self.confidence_threshold else None
         results['course_confidence'] = course_conf
-        
+
         # Classify sentiment
         sentiment_label, sentiment_conf = self.classify_sentiment(text)
         results['sentiment_label'] = sentiment_label if sentiment_conf >= self.confidence_threshold else None
         results['sentiment_confidence'] = sentiment_conf
         results['sentiment_score'] = self.calculate_sentiment_score(sentiment_label, sentiment_conf)
-        
+        results['method_used'] = 'rule_based'
+
         return results
     
     def label_all_posts(self) -> int:

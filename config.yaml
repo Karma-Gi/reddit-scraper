@@ -50,6 +50,32 @@ labeling:
   - 积极
   - 消极
   - 中性
+
+# Smart labeling configuration
+smart_labeling:
+  enabled: true  # Enable AI-powered labeling
+  methods:
+    - "pattern"      # Pattern-based analysis (重要：学术领域特定识别)
+    - "textblob"     # TextBlob sentiment analysis
+    - "vader"        # VADER sentiment analysis
+    - "transformers" # Hugging Face transformers
+    # - "llm"        # LLM API (optional, requires API key)
+
+  # Model configurations
+  sentiment_model: "cardiffnlp/twitter-roberta-base-sentiment-latest"
+
+
+  # LLM API configuration (optional)
+  llm:
+    enabled: false
+    provider: "openai"  # or "anthropic"
+    api_key: ""  # Set your API key here or use environment variable
+
+  # Scoring configuration
+  scoring:
+    difficulty_scale: [0, 10]  # 0=easiest, 10=hardest
+    course_scale: [0, 10]      # 0=worst, 10=best
+    sentiment_scale: [0, 10]   # 0=most negative, 10=most positive
 processing:
   max_comment_length: 10000
   min_comment_length: 5

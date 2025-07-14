@@ -20,12 +20,15 @@ nltk>=3.8.0
 textblob>=0.17.0
 langdetect>=1.0.9
 
-# Advanced NLP models
+# Advanced NLP models for smart labeling
 transformers>=4.35.0
 torch>=2.0.0
 sentence-transformers>=2.2.0
 openai>=1.3.0  # For GPT API (optional)
 anthropic>=0.7.0  # For Claude API (optional)
+
+# Additional sentiment analysis models
+vaderSentiment>=3.3.2
 fuzzywuzzy>=0.18.0
 python-levenshtein>=0.21.0
 

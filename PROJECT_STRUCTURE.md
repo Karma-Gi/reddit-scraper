@@ -29,12 +29,10 @@ reddit-scraper/
 │   └── 📄 usage_example.py     # 详细使用示例
 │
 ├── 📄 setup_reddit_api.py      # Reddit API设置向导
-├── 📄 setup_smart_extraction.py # 智能提取设置向导
 ├── 📄 setup_mysql.py           # MySQL数据库设置
 ├── 📄 test_reddit_api.py       # Reddit API测试
-├── 📄 test_smart_extraction.py # 智能提取测试
 ├── 📄 run_tests.py             # 测试运行器
-├── 📄 setup.py                 # 包安装配置
+├── 📄 QUICK_START.md           # 快速开始指南
 └── 📄 MYSQL_SETUP.md           # MySQL设置指南
 ```
 
