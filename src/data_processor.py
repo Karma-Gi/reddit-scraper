@@ -17,6 +17,7 @@ from .utils import (
     is_valid_content, detect_language, log_message
 )
 from .database_manager import create_database_manager
+from .smart_entity_extractor import SmartEntityExtractor
 
 
 class DataProcessor:
@@ -28,11 +29,21 @@ class DataProcessor:
         self.db_manager = create_database_manager(self.config)
         self.db_manager.connect()
         
-        # Load keywords from config
+        # Load keywords from config (fallback)
         self.university_keywords = set(self.config['keywords']['universities'])
         self.major_keywords = set(self.config['keywords']['majors'])
         self.program_keywords = set(self.config['keywords']['programs'])
-        
+
+        # Initialize smart entity extractor
+        self.smart_extractor = None
+        if self.config.get('smart_extraction', {}).get('enabled', False):
+            try:
+                self.smart_extractor = SmartEntityExtractor(config_path)
+                log_message("✅ Smart entity extractor initialized")
+            except Exception as e:
+                log_message(f"⚠️  Failed to initialize smart extractor: {e}", "WARNING")
+                log_message("Falling back to keyword-based extraction")
+
         # Compile regex patterns for efficiency
         self._compile_patterns()
     
@@ -81,29 +92,51 @@ class DataProcessor:
         return text.strip()
     
     def extract_entities(self, text: str) -> Dict[str, List[str]]:
-        """Extract universities, majors, and programs from text"""
+        """Extract universities, majors, and programs from text using smart or fallback methods"""
+
+        # Try smart extraction first
+        if self.smart_extractor:
+            try:
+                entities = self.smart_extractor.extract_entities_smart(text)
+
+                # Log extraction results for debugging
+                total_entities = sum(len(v) for v in entities.values())
+                if total_entities > 0:
+                    log_message(f"Smart extraction found: {entities}")
+
+                return entities
+
+            except Exception as e:
+                log_message(f"Smart extraction failed: {e}", "ERROR")
+                log_message("Falling back to keyword extraction")
+
+        # Fallback to keyword-based extraction
+        return self._extract_entities_keyword(text)
+
+    def _extract_entities_keyword(self, text: str) -> Dict[str, List[str]]:
+        """Fallback keyword-based entity extraction"""
         text_lower = text.lower()
         entities = {
             'universities': [],
             'majors': [],
             'programs': []
         }
-        
+
         # Extract universities
         for university in self.university_keywords:
             if university.lower() in text_lower:
                 entities['universities'].append(university)
-        
+
         # Extract majors
         for major in self.major_keywords:
             if major.lower() in text_lower:
                 entities['majors'].append(major)
-        
+
         # Extract programs
         for program in self.program_keywords:
             if program.lower() in text_lower:
                 entities['programs'].append(program)
-        
+
         # Use regex for more complex patterns
         # University patterns
         university_patterns = [
@@ -111,15 +144,15 @@ class DataProcessor:
             r'\b(University of [A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b',
             r'\b([A-Z]{2,5})\b(?=.*(?:university|college|institute))',
         ]
-        
+
         for pattern in university_patterns:
             matches = re.findall(pattern, text, re.IGNORECASE)
             entities['universities'].extend(matches)
-        
+
         # Remove duplicates and clean
         for key in entities:
             entities[key] = list(set([item.strip() for item in entities[key] if item.strip()]))
-        
+
         return entities
     
     def calculate_text_similarity(self, text1: str, text2: str) -> float:

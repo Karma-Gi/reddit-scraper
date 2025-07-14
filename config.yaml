@@ -57,6 +57,25 @@ processing:
   # Language filtering settings
   enable_language_filter: true # Disable by default due to accuracy issues
   target_language: "en"
+
+# Smart entity extraction configuration
+smart_extraction:
+  enabled: true  # Enable smart extraction
+  methods:
+    - "spacy"      # spaCy NER
+    - "keyword"    # Enhanced keyword matching
+    - "pattern"    # Regex patterns
+    - "semantic"   # Semantic similarity (optional)
+    # - "llm"      # LLM API (optional, requires API keys)
+
+  # Model configurations
+  sentence_model: "all-MiniLM-L6-v2"  # Sentence transformer model
+
+  # LLM API configuration (optional)
+  llm:
+    enabled: false
+    provider: "openai"  # or "anthropic"
+    api_key: ""  # Set your API key here or use environment variable
 reddit_api:
   client_id: iGrqFSWhna5Yz-DM1k8oAw
   client_secret: 17-kiRkgHdPT92pxC8U5JcDz5M_Y4g
